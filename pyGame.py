@@ -28,6 +28,8 @@ enemies_killed = 0
 enemy_speed = 2
 enemy_spawn_interval = 3000
 show_round_two_popup = False
+show_round_three_popup = False
+boss_spawned = False
 enemy_bullet_cooldown = 1500
 last_enemy_bullet_time = pygame.time.get_ticks()
 
@@ -178,7 +180,7 @@ class Enemy(pygame.sprite.Sprite):
         self.rect.x = self.x
 
         # Check for enemy bullet cooldown and shoot more frequently
-        if round == 2 and self.last_enemy_bullet_time + 1000 < pygame.time.get_ticks():  # Reduced to 1000ms
+        if round == 2 and self.last_enemy_bullet_time + 1000 < pygame.time.get_ticks():
             enemy_bullet = EnemyBullet(self.rect.x, self.rect.y + self.image.get_height() // 2)
             enemy_bullet_group.add(enemy_bullet)
             self.last_enemy_bullet_time = pygame.time.get_ticks()
@@ -192,6 +194,41 @@ class Enemy(pygame.sprite.Sprite):
         if self.x < 0:
             self.kill()
 
+# Boss Enemy class
+class BossEnemy(Enemy):
+    def __init__(self):
+        super().__init__()
+        self.health = 10  # Higher health than normal enemies
+        self.image = scale_image(enemy_images[0], 120)  # Larger size than normal enemies
+        self.rect = self.image.get_rect()
+        self.y = ground_level + 20
+        self.rect.x = self.x
+        self.rect.y = self.y
+
+    def update(self):
+        super().update()
+
+        # Boss health handling
+        if pygame.sprite.spritecollide(self, bullet_group, True):
+            self.health -= 1
+            if self.health <= 0:
+                self.kill()
+                global enemies_killed
+                enemies_killed += 1
+                player.score += 5  # Boss gives more score when killed
+                # Call game over with congratulation message
+                game_over("Congratulations! You defeated the boss!")
+
+# Create a function for game over with a message
+def game_over(message):
+    font = pygame.font.Font(pygame.font.get_default_font(), 48)
+    text = font.render(message, True, red)
+    text_rect = text.get_rect(center=(game_width // 2, game_height // 2))
+    game_window.blit(text, text_rect)
+    pygame.display.update()
+    pygame.time.wait(3000)  # Pause for 3 seconds to show the message
+    pygame.quit()
+    exit()
 
 # Create sprite groups
 player_group = pygame.sprite.Group()
@@ -205,19 +242,24 @@ player_y = ground_level
 player = Player(player_x, player_y)
 player_group.add(player)
 
+# Draw message based on round
+def draw_message(round_number):
+    font = pygame.font.Font(pygame.font.get_default_font(), 36)
+    if round_number == 2:
+        message = "Round 2! Press Enter to continue!"
+    elif round_number == 3:
+        message = "Final Round! Boss incoming! Press Enter to continue!"
+    
+    text = font.render(message, True, red)
+    text_rect = text.get_rect(center=(game_width // 2, game_height // 2))
+    game_window.blit(text, text_rect)
+    pygame.display.update()
+
 # Game loop
 clock = pygame.time.Clock()
 fps = 120
 running = True
 bg_scroll = 0
-
-def draw_round_two_message():
-    font = pygame.font.Font(pygame.font.get_default_font(), 36)
-    message = "Round Two is Starting! Press ENTER to continue"
-    text = font.render(message, True, red)
-    text_rect = text.get_rect(center=(game_width // 2, game_height // 2))
-    game_window.blit(text, text_rect)
-    pygame.display.update()
 
 while running:
     clock.tick(fps)
@@ -227,17 +269,28 @@ while running:
             running = False
 
     if show_round_two_popup:
-        draw_round_two_message()
+        draw_message(2)
         keys = pygame.key.get_pressed()
         if keys[K_RETURN]:
             show_round_two_popup = False
             round = 2
-            enemy_speed = 3  # Increased but slower than Round 1
+            enemy_speed = 3
             enemy_spawn_interval = 1500
+        continue
+
+    if show_round_three_popup:
+        draw_message(3)
+        keys = pygame.key.get_pressed()
+        if keys[K_RETURN]:
+            show_round_three_popup = False
+            round = 3
+            enemy_speed = 4  # Increase speed slightly
+            enemy_spawn_interval = 1000
         continue
 
     keys = pygame.key.get_pressed()
 
+    # Player controls
     if keys[K_LEFT]:
         player.x -= 3
         player.facing_right = False
@@ -248,6 +301,7 @@ while running:
         player.vertical_speed = jump_power
         player.on_ground = False
 
+    # Shooting bullets
     if keys[K_SPACE] and last_bullet_time + bullet_cooldown < pygame.time.get_ticks():
         bullet_x = player.x + (player.image.get_width() if player.facing_right else 0)
         bullet_y = player.y + player.image.get_height() // 2
@@ -255,15 +309,25 @@ while running:
         bullet_group.add(bullet)
         last_bullet_time = pygame.time.get_ticks()
 
+    # Spawn enemies
     if next_enemy_spawn < pygame.time.get_ticks():
-        enemy = Enemy()
-        enemy_group.add(enemy)
+        
+        if round == 3 and not boss_spawned:
+            boss_enemy = BossEnemy()  # Spawn the boss
+            enemy_group.add(boss_enemy)
+            boss_spawned = True
+        else:
+            enemy = Enemy()
+            enemy_group.add(enemy)
+
         next_enemy_spawn = random.randint(pygame.time.get_ticks(), pygame.time.get_ticks() + enemy_spawn_interval)
 
+    # Background scrolling
     bg_scroll += 1
     if bg_scroll >= game_width:
         bg_scroll = 0
 
+    # Draw everything
     game_window.blit(bg, (0 - bg_scroll, 0))
     game_window.blit(bg, (game_width - bg_scroll, 0))
 
@@ -291,11 +355,15 @@ while running:
     score_text = font.render(f'Score: {player.score}', True, black)
     game_window.blit(score_text, (game_width - 150, 20))
 
+    # Handle round transitions
     if round == 1 and enemies_killed >= 10:
         show_round_two_popup = True
 
+    if round == 2 and enemies_killed >= 20 and not show_round_three_popup:
+        show_round_three_popup = True
+
     if player.lives == 0:
-        running = False
+        game_over("Game Over! You lost all lives.")
 
     pygame.display.update()
 
